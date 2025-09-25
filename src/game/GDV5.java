@@ -1,0 +1,237 @@
+package game;
+
+import java.awt.Canvas;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
+import java.awt.image.BufferStrategy;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import javax.imageio.ImageIO;
+import javax.swing.JFrame;
+
+/**
+ * @(#)GameDriverV4.java
+ *
+ * updates V4: JFrame included, keylistener included, switch to render, game loop
+ * from tasktimer to thread
+ * Updates V5: keyTyped, switched to update and render
+ * Updates V6: Added Pong game implementation
+ *
+ * @version 6.0 9/24/2025
+ */
+public abstract class GDV5 extends Canvas implements Runnable, KeyListener {
+    private static final long serialVersionUID = 1L;
+
+    private int framesPerSecond;
+    public static boolean[] KeysPressed;
+    // default window sizes
+    private static int MAX_WINDOW_X = 1200;
+    private static int MAX_WINDOW_Y = 800;
+    private static int PADDING = 2;
+    // it is your responsibility to handle the release on keysTyped
+    public static boolean[] KeysTyped;
+
+    private JFrame frame;
+    private String title = "Pong";
+    private boolean cleanCanvas = true;
+
+    /**
+     *
+     * @param frames
+     */
+    public GDV5(int frames) {
+        this.framesPerSecond = frames;
+        this.addKeyListener(this);
+        // allocate arrays slightly larger than KEY_LAST to avoid index issues
+        KeysPressed = new boolean[KeyEvent.KEY_LAST + 1];
+        KeysTyped = new boolean[KeyEvent.KEY_LAST + 1];
+        this.setBackground(Color.BLACK);
+        this.setPreferredSize(new Dimension(MAX_WINDOW_X, MAX_WINDOW_Y));
+    }
+
+    public GDV5() {
+        this(60); // default setting (60 frames per second)
+    }
+
+    public void start() {
+        // ensure canvas has a size
+        if (this.getWidth() == 0 || this.getHeight() == 0) {
+            this.setPreferredSize(new Dimension(MAX_WINDOW_X, MAX_WINDOW_Y));
+        }
+        frame = new JFrame();
+        frame.add(this);
+        frame.pack();
+        frame.setTitle(title);
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setLocationRelativeTo(null);
+        frame.setResizable(false);
+        frame.setVisible(true);
+        this.startThread();
+    }
+
+    private synchronized void startThread() {
+        Thread t1 = new Thread(this);
+        t1.start(); // calls run method after paint
+        this.setFocusable(true);
+        this.requestFocus();
+    }
+
+    public void setFrames(int num) {
+        this.framesPerSecond = num;
+    }
+
+    public abstract void update();
+
+    public abstract void draw(Graphics2D win);
+
+    private void render() {
+        BufferStrategy buffs = this.getBufferStrategy();
+        if (buffs == null) {
+            this.createBufferStrategy(3);
+            buffs = this.getBufferStrategy();
+        }
+        Graphics g = buffs.getDrawGraphics();
+        if (this.cleanCanvas) {
+            g.setColor(this.getBackground());
+            g.fillRect(0, 0, this.getWidth(), this.getHeight());
+        }
+        draw((Graphics2D) g);
+        g.dispose();
+        buffs.show();
+    }
+
+    @Override
+    public void run() {
+        long lastTime = System.nanoTime();
+        // correct conversion: nanoseconds per frame
+        double nanoSecondConversion = 1_000_000_000.0 / (double) this.framesPerSecond;
+        double changeInSeconds = 0;
+        while (true) {
+            long now = System.nanoTime();
+            changeInSeconds += (now - lastTime) / nanoSecondConversion;
+            // update while enough time has passed for a frame
+            while (changeInSeconds >= 1) {
+                update();
+                changeInSeconds--;
+            }
+            render();
+            lastTime = now;
+            // optional small sleep to be nice to CPU (uncomment if desired)
+            /*
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            */
+        }
+    }
+
+    public BufferedImage addImage(String name) {
+        BufferedImage img = null;
+        try {
+            img = ImageIO.read(this.getClass().getResourceAsStream(name));
+        } catch (IOException | IllegalArgumentException e) {
+            System.out.println("Error loading image: " + name + " -> " + e.getMessage());
+        }
+        return img;
+    }
+
+    @Override
+    public void keyPressed(KeyEvent e) {
+        int code = e.getKeyCode();
+        if (code >= 0 && code < KeysPressed.length) {
+            KeysPressed[code] = true;
+        }
+    }
+
+    @Override
+    public void keyReleased(KeyEvent e) {
+        int code = e.getKeyCode();
+        if (code >= 0 && code < KeysPressed.length) {
+            KeysPressed[code] = false;
+            KeysTyped[code] = true;
+        }
+    }
+
+    @Override
+    public void keyTyped(KeyEvent e) {
+        // Intentionally empty; the user of this class can inspect KeysTyped[].
+    }
+
+    /**
+     * Returns the direction of collision (0 = right, 1 = top, 2 = left, 3 = bottom).
+     * stationary - the object we are colliding into
+     * projectile - the object that is moving
+     * dx = projectile's x displacement
+     * dy = projectile's y displacement
+     */
+    public static int collisionDirection(Rectangle stationary, Rectangle projectile, int dx, int dy) {
+        // calculate previous location
+        int previousXPos = (int) projectile.getX() - dx;
+        int previousYPos = (int) projectile.getY() - dy;
+        int height = (int) projectile.getHeight();
+        int width = (int) projectile.getWidth();
+        int result = 0; // default intersects from right
+
+        if (previousYPos + height <= stationary.getY() && projectile.getMaxY() >= stationary.getY()) {
+            // intersects from top
+            result = 1;
+        } else if (previousXPos + width <= stationary.getX() && projectile.getX() + width >= stationary.getX()) {
+            // intersects from left
+            result = 2;
+        } else if (previousYPos >= stationary.getY() + stationary.height && projectile.getY() <= stationary.getY() + stationary.height) {
+            // intersects from bottom
+            result = 3;
+        } else {
+            // default/right or fallback
+            result = 0;
+        }
+        return result;
+    }
+
+    // --- Getters / Setters ---
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+        if (frame != null) {
+            frame.setTitle(title);
+        }
+    }
+
+    public void setCleanCanvas(boolean option) {
+        this.cleanCanvas = option;
+    }
+
+    public static int getMaxWindowX() {
+        return MAX_WINDOW_X;
+    }
+
+    public static int getMaxWindowY() {
+        return MAX_WINDOW_Y;
+    }
+
+    public static void setMaxWindowX(int sizeX) {
+        MAX_WINDOW_X = sizeX;
+    }
+
+    public static void setMaxWindowY(int sizeY) {
+        MAX_WINDOW_Y = sizeY;
+    }
+
+    public static int getPadding() {
+        return PADDING;
+    }
+
+    public static void setPadding(int paddingVal) {
+        PADDING = paddingVal;
+    }
+}
